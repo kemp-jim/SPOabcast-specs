@@ -1,0 +1,20 @@
+% If pi ∈ M broadcasts m while in e, then all processes in M eventually deliver m; 
+% (if every process in M is correct)
+
+
+
+forall M: Members_t, m: Message_t, pi: ProcessId_t  .
+val(pi in M && M in POSSIBLE_MEMBERS && m in POSSIBLE_STATE_UPDATES) => (
+
+[(forall pid: ProcessId_t . !crash(pid))*]
+[exists pid: ProcessId_t . introduction(MAX_EPOCH, M, pid)] 
+[(forall pid: ProcessId_t . !crash(pid))*]
+[exists pid: ProcessId_t . broadcast(pid, MAX_EPOCH, m)]
+% for every process pi in M, pi eventually delivers m (if it does not crash)
+mu X . 
+% dont consider crash(pi) actions
+% dont follow any done actions since they are self loops
+[forall pid: ProcessId_t . !crash(pid) && !done(pid)]X || 
+<exists e: Nat . deliver(pi, e, m)> true
+
+)

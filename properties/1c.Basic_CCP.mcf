@@ -1,0 +1,13 @@
+% Processes join configurations with monotonically increasing epochs.
+
+[true*] 
+forall pi: ProcessId_t, e1: Nat .
+val(e1 <= MAX_EPOCH) => (
+
+
+% conf_changed(pi, e1, _, _, _, _)
+[exists M: Members_t, mArr: MessageArray_t, pid: ProcessId_t, b: Bool . conf_changed(pi, e1, M, pid, mArr, b)]
+%
+[true*]
+% conf_changed(pi, e2, _, _, _, _) with e2 <= e1
+[exists e2: Nat, M: Members_t, pid: ProcessId_t, mArr: MessageArray_t, b: Bool . val(e2 <= e1) && conf_changed(pi, e2, M, pid, mArr, b)] false )

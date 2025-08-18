@@ -1,0 +1,4 @@
+% It is faster to check this by using lps2lts with the --action flag when the lts is created.
+[true*][error] false 
+&&
+[true*][modelError] false

@@ -1,0 +1,48 @@
+% If a process delivers m, then all processes in M eventually deliver m.
+
+% Informally this means that if a process delivers m somewhere in the execution, and a configuration with members M is introduced, then every process in M eventually delivers m or it must have already delivered m (m could also be delivered before M is introduced).
+
+% The property is split into three cases A, B and C, dependent on how often a message m is delivered before the introduction of MAX_EPOCH.
+
+% For A, m is delivered exactly once before the introduction. 
+% Then all remaining processes in M must eventually deliver m after the introduction.
+
+% For B, m is delivered exactly twice after the introduction.
+% Then all remaining processes in M must eventually deliver m after the introduction.
+
+% For C, m is delivered exactly 0 times before the introduction. m is delivered once after the introduction and then all processes in M must eventually deliver m.
+
+% We dont check for the case where m is delivered three times before the introduction, because in that case every process in M must have already delivered m, as there are only 3 processes, and every process delivers a given message at most once (checked by property 2.Integrity). 
+
+forall M: Members_t, m: Message_t, pi, pj, pk: ProcessId_t  .
+val((pk in M - {pi, pj}) && M in POSSIBLE_MEMBERS && m in POSSIBLE_STATE_UPDATES) => (
+
+
+%%%%%%%%%%%%%%%%%%%%%%
+% case (B): Two deliveries of m happen before MAX_EPOCH is introduced 
+%%%%%%%%%%%%%%%%%%%%%%
+
+
+% a path where no one delivers m and no process crashes
+[(!(exists pid: ProcessId_t, e: Nat . deliver(pid, e, m) || crash(pid)))*]
+% pi delivers m
+[exists e: Nat . deliver(pi, e, m)]
+% a path where no one delivers m and no process crashes
+[(!(exists pid: ProcessId_t, e: Nat . deliver(pid, e, m) || crash(pid)))*]
+% pj delivers m
+[exists e: Nat . deliver(pj, e, m)]
+% a path where no one delivers m and no process crashes
+[(!(exists pid: ProcessId_t, e: Nat . deliver(pid, e, m) || crash(pid)))*]
+% introduction of MAX_EPOCH
+[exists pid: ProcessId_t . introduction(MAX_EPOCH, M, pid)]
+% for all remaining processes pk in M that have not already delivered (so without pi and pj)
+
+% eventually m is delivered by pj
+mu X . 
+% dont consider crash(pid) actions with pid in M
+% dont consider any done actions since they are self loops
+[forall pid: ProcessId_t . !crash(pid) && !done(pid)]X ||  
+% m is delivered by a process in M
+<exists e: Nat . deliver(pk, e, m) > true
+
+)

@@ -1,0 +1,12 @@
+% Any epoch e is associated with unique membership and leader.
+
+[true*] 
+forall e: Nat, M1: Members_t, pi: ProcessId_t .
+val(e <= MAX_EPOCH && M1 in POSSIBLE_MEMBERS) => (
+
+% conf_changed(_, e, M1, pi, _, _)
+[exists mArr: MessageArray_t, pid: ProcessId_t, b: Bool . conf_changed(pid, e, M1, pi, mArr, b)]
+% 
+[true*]
+% conf_changed(_, e, M2, pj, _, _) with M1 != M2 or pi != pj
+[exists pid, pj: ProcessId_t, M2: Members_t, mArr: MessageArray_t, b: Bool . val(pi != pj || M1 != M2) && conf_changed(pid, e, M2, pj, mArr, b)] false )

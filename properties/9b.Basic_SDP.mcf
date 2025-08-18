@@ -1,0 +1,9 @@
+% A process pi can speculatively deliver a given message m at most once in a given epoch and only if it is the leader of that epoch, m has previously been broadcast, and m has not yet been delivered  by pi.
+
+
+
+
+% pi can spec deliver only if it is the leader of e
+
+[true*]
+[exists pi, pj: ProcessId_t, e: Nat, M: Members_t, m: Message_t, spec: MessageArray_t . val(m in spec && pi != pj) && conf_changed(pi, e, M, pj, spec, true)] false

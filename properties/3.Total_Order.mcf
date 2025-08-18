@@ -1,0 +1,14 @@
+% If some process delivers m1 before m2 , then any process that delivers m2 must also deliver m1 before this.
+
+[true*]
+
+forall pi, pj: ProcessId_t, m1, m2: Message_t .
+val(m1 in POSSIBLE_STATE_UPDATES && m2 in POSSIBLE_STATE_UPDATES) =>
+
+[exists e: Nat . deliver(pi, e, m1)]
+[true*]
+[exists e: Nat . deliver(pi, e, m2)]
+[true*]
+[exists e: Nat . deliver(pj, e, m2)]
+[true*]
+[exists e: Nat . deliver(pj, e, m1)] false

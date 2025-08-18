@@ -1,0 +1,17 @@
+% Any configuration a process joins is introduced; a configuration is introduced at most once.
+
+
+% Here we do not check for an introduction() action happening after conf_changed, as the introduction happens always before the conf_changed
+
+[true*]
+forall e: Nat, M: Members_t, pi: ProcessId_t . 
+val(e <= MAX_EPOCH && M in POSSIBLE_MEMBERS) => (
+% A configuration is introduced at most once
+
+[introduction(e, M, pi)]
+[true*]
+[introduction(e, M, pi)] false
+
+
+
+)

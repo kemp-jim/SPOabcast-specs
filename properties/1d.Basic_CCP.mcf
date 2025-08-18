@@ -1,0 +1,18 @@
+% Any configuration a process joins is introduced; a configuration is introduced at most once.
+
+
+% Here we do not check for an introduction() action happening after conf_changed, as the introduction happens always before the conf_changed
+
+forall e: Nat, M: Members_t, pi: ProcessId_t . 
+val(e <= MAX_EPOCH && M in POSSIBLE_MEMBERS) => (
+
+% Any configuration a process joins is introduced
+
+% a path where <e, M, pi> is never introduced
+[( !introduction(e, M, pi) )*]
+% a process joins <e, M, pi>
+[exists mArr: MessageArray_t, pid: ProcessId_t, b: Bool . conf_changed(pid, e, M, pi, mArr, b)] false 
+
+
+
+)

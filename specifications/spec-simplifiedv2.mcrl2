@@ -1,0 +1,937 @@
+%%%%%%%%%%%%%%%%%%
+% In this specification, in the first state, the epoch is 1, and one message has been committed.
+
+%%%%%%%%%%%%%%%%%%
+% Naming Conventions:
+%%%%%%%%%%%%%%%%%%
+% Sorts are in PascalCase and end with _t.
+% Constants are in uppercase SNAKE_CASE.
+% Recognizer and projection functions are in snake_case.
+% Actions are in camelCase and should start with a verb.
+
+
+%%%%%%%%%%%%%%%%%%
+% Parameters of the model
+%%%%%%%%%%%%%%%%%%
+% The parameters can be changed at the eqn keyword.
+
+
+%%%%%%%%%%%%%%%%%%
+% How to change the number of processes:
+%%%%%%%%%%%%%%%%%%
+% 1. Change the sort ProcessId_t.
+% 2. Change the initial replicas and channels at the init keyword.
+
+
+%%%%%%%%%%%%%%%%%%
+% Other:
+%%%%%%%%%%%%%%%%%%
+% A configuration is a triple <epoch, members, leader>. But such a sort is never implemented in this model as it is not needed and makes the model harder to read.
+
+
+%%%%%%%%%%%%%%%%%%
+
+sort
+
+	% An Id of a process.
+	% p0, p1 etc are replicas
+	% CS is the configuration service
+	% pr is the reconfiguration master
+	ProcessId_t = struct CS | pr | p0 | p1 
+						| p2 
+						%| p3 
+						%| p4 
+						;
+
+	% The status of a replica
+	% A fresh replica is a replica that is not part of a configuration.
+	Status_t = struct fresh | follower | leader;
+
+
+	% A message is a state update that is broadcast using atomic broadcast.
+	% A state update is a tuple that describes the difference of an initial state and a next state of a certain replica.
+	% A message can also be empty.
+	Message_t = struct empty | stateUpdate(state_update_initial_state: State_t, state_update_next_state: State_t);
+	
+	% A state of a replica.
+	% state_process is the process that initially generated this state.
+	% state_number is the number of broadcasts that that process has initiated. This makes the state unique.
+	State_t = struct state(state_process: ProcessId_t, state_number: Nat);
+
+	% Communication between the processes.
+	Communication_t = struct 
+								
+				%%%%%%%%%%%%%%%%%%
+				% Communication only for replicas.
+				%%%%%%%%%%%%%%%%%%
+
+
+				% accept
+				Accept(accept_epoch: Nat, accept_k: Nat, accept_m: Message_t) ? is_accept
+				% accept ack
+				| AcceptAck(accept_ack_epoch: Nat, accept_ack_k: Nat) ? is_accept_ack
+				% commit
+				| Commit(commit_e: Nat, commit_k: Nat) ? is_commit
+
+				
+				% probe
+				| Probe(probe_enew: Nat, probe_e: Nat) ? is_probe
+				% probe ack
+				| ProbeAck(probe_ack_res: Bool, probe_ack_enew: Nat) ? is_probe_ack
+				% new config
+				| NewConfig(new_config_epoch: Nat, new_config_members: Members_t) ? is_new_config
+				% new state
+				| NewState(new_state_epoch: Nat, new_state_messages: MessageArray_t, new_state_members: Members_t) ? is_new_state
+				% new state ack
+				| NewStateAck(new_state_ack_epoch: Nat) ? is_new_state_ack
+				
+				%%%%%%%%%%%%%%%%%%
+				% Communication for the CS.
+				%%%%%%%%%%%%%%%%%%
+
+				% A replica sends this to the CS to request the last epoch.
+				| ReqLastEpoch ? is_req_last_epoch
+				% The CS sends this to a replica that requested the last epoch.
+				| SendLastEpoch(send_last_epoch_epoch: Nat) ? is_send_last_epoch
+
+				% A replica sends this to the CS to request the members.
+				| ReqMembers(req_members_epoch: Nat) ? is_req_members
+				% The CS sends this to a replica that requested the members.
+				| SendMembers(send_members_members: Members_t, send_members_epoch: Nat) ? is_send_members
+
+				% A replica sends this to the CS to request a compare and swap.
+				| ReqCAS(req_CAS_epoch: Nat, req_CAS_members: Members_t, req_CAS_leader: ProcessId_t) ? is_req_CAS
+				% The CS sends this to a replica that requested a CAS.
+				| SendCAS(send_CAS_result: Bool, send_CAS_epoch: Nat, send_CAS_members: Members_t, send_CAS_leader: ProcessId_t) ? is_send_CAS;
+
+
+	% A dictionary that returns the members associated with a given Nat.
+	MembersDict_t = Nat -> Members_t;
+
+	% A dictionary that returns the set of processes associated with a given Nat.
+	ProcessIdDict_t = Nat -> Set(ProcessId_t);
+ 
+	% A set of members.
+	Members_t = Set(ProcessId_t);
+
+	% This array stores the state updates.
+	MessageArray_t = List(Message_t);
+
+
+
+
+map
+	
+	% Overwrite the item at the given position. The number of elments stays the same.
+	overwriteAtPosition: Nat # Message_t # MessageArray_t -> MessageArray_t;
+
+	% Applies the update to the given state. If it is not possible, then it returns the unaltered state.
+	applyStateUpdate: Message_t # State_t -> State_t;
+
+	% Returns true if the update can be applied to the state.
+	canApplyStateUpdate: Message_t # State_t -> Bool;
+	
+	% Get the stateUpdates in the array that are delimited by the two Nats and apply them to the state in increasing order.
+	% Example: applyMultipleStateUpdates(arr, 2, 4, state) applies the updates with index 2, 3 and 4 in arr to "state"
+	% If the first Int is greater than the second, then the result is the initial state.
+	applyMultipleStateUpdates: MessageArray_t # Int # Int # State_t -> State_t;
+
+	% Returns true if all the updates in the array delimited by the naturals can be applied in increasing order to the state.
+	% If the first Int is greater than the second, this returns true.
+	canApplyMultipleStateUpdates: MessageArray_t # Int # Int # State_t -> Bool;
+
+	% Returns the index of the last item in the MessageArray_t.
+	% Returns -1 if the array is empty.
+	getIndexOfLastElement: MessageArray_t -> Int;
+
+	% Returns a subarray of the given MessageArray_t delimited by the given naturals. If the first integer is larger than the second then the result is [].
+	% Example: getSubMessageArray(2,3,[a,b,c,d])=[c,d]
+	getSubMessageArray: Int # Int # MessageArray_t -> MessageArray_t;
+
+	% Returns true if the first stateUpdate precedes the second one in the array (even if both stateUpdates are the same).
+	% Returns false otherwise (also when at least one stateUpdate is not in the array).
+	precedes: MessageArray_t # Message_t # Message_t -> Bool;
+
+	% Returns true if every element in the array is unique. Does not consider "empty" state updates.
+	% Example: hasOnlyUniqueStateUpdates([empty, empty, s1, s2]) returns true.
+	hasOnlyUniqueStateUpdates: MessageArray_t -> Bool;
+
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+	% Constants
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+	% The initial member set. The initial leader must be part of this set.
+	INITIAL_MEMBERS: Members_t;
+	% The initial leader.
+	INITIAL_LEADER: ProcessId_t;
+	% The initial state of each replica.
+	INITIAL_STATE: State_t;
+	% The initial array of messages for each replica.
+	INITIAL_MESSAGE_ARRAY: MessageArray_t;
+
+	% The maximum epoch that can be introduced.
+	MAX_EPOCH: Nat;
+	% The maximum number of broadcasts that can be done..
+	MAX_BROADCASTS: Nat;
+
+	% The set of replicas that can crash.
+	CRASHABLE_REPLICAS: Set(ProcessId_t);
+	% The maximum number of communications that can be stored in each channel.
+	CHANNEL_SIZE: Nat;
+	% If true then a replica may initiate reconfiguration
+	ALLOW_RECONFIGURATION: Bool;
+	% If true then a replica may start broadcasting a message using atomic broadcast.
+	ALLOW_ATOMIC_BROADCAST: Bool;
+
+	% The set of all member sets that are possible in the model.
+	POSSIBLE_MEMBERS: Set(Members_t);
+	% The set of states.
+	POSSIBLE_STATES: Set(State_t);
+	% Only the stateUpdates in this set will be broadcast.
+	POSSIBLE_STATE_UPDATES: Set(Message_t);
+
+
+var 
+	aNat: Nat;
+	aInt, bInt: Int;
+
+	mArr: MessageArray_t;
+
+	sUpdate: Message_t;
+	sUpdate2: Message_t;
+	state1: State_t;
+
+
+eqn 
+	
+	% applyStateUpdate
+	(state_update_initial_state(sUpdate) == state1) -> applyStateUpdate(sUpdate, state1) = state_update_next_state(sUpdate);
+
+	% canApplyStateUpdate
+	canApplyStateUpdate(sUpdate, state1) = (state_update_initial_state(sUpdate) == state1);
+
+	% applyMultipleStateUpdates
+	% The stateUpdate with index aInt in mArr is applied to state1. Then applyMultipleStateUpdates is called again, but with aInt + 1 and the updated state.
+	(aInt < bInt && aInt >= 0) -> applyMultipleStateUpdates(mArr, aInt, bInt, state1) = applyMultipleStateUpdates(mArr, aInt + 1, bInt, applyStateUpdate( mArr . Int2Nat(aInt), state1));
+	% When aInt == bInt, then only one more state update is be applied.
+	(aInt == bInt && aInt >= 0) -> applyMultipleStateUpdates(mArr, aInt, bInt, state1) = applyStateUpdate(mArr . Int2Nat(aInt), state1);
+	% For all other cases, no updates are applied.
+	(aInt > bInt || aInt < 0) -> applyMultipleStateUpdates(mArr, aInt, bInt, state1) = state1;
+
+	% canApplyMultipleStateUpdates
+	% Get the result of canApplyStateUpdate of the update of index aInt, and then call canApplyMultipleStateUpdates with index aInt + 1 and the updated state.
+	(aInt < bInt && aInt >= 0) -> canApplyMultipleStateUpdates(mArr, aInt, bInt, state1) = canApplyStateUpdate( mArr . Int2Nat(aInt), state1) && canApplyMultipleStateUpdates(mArr, aInt + 1, bInt, applyStateUpdate( mArr . Int2Nat(aInt), state1));
+	% When aInt == bInt, only check if the update of index aInt can be applied.
+	(aInt == bInt && aInt >= 0) -> canApplyMultipleStateUpdates(mArr, aInt, bInt, state1) = canApplyStateUpdate( mArr . Int2Nat(aInt), state1);
+	% For all other cases return true.
+	(aInt > bInt || aInt < 0) -> canApplyMultipleStateUpdates(mArr, aInt, bInt, state1) = true;	
+
+	% getIndexOfLastElement
+	(mArr == []) -> getIndexOfLastElement(mArr) = -1;
+	(!(empty in mArr) && !(mArr == [])) -> getIndexOfLastElement(mArr) = getIndexOfLastElement(tail(mArr)) + 1;
+
+	% getSubMessageArray
+	(aInt <= bInt && aInt >= 0) -> getSubMessageArray(aInt, bInt, mArr) = mArr . Int2Nat(aInt) |> getSubMessageArray(aInt + 1, bInt, mArr);
+	(aInt > bInt) -> getSubMessageArray(aInt, bInt, mArr) = [];
+	% (aInt <= bInt && aInt < 0)
+	
+	% overwriteAtPosition
+	(aNat > 0 && #mArr > aNat) -> overwriteAtPosition(aNat, sUpdate, mArr) = head(mArr) |> overwriteAtPosition(Int2Nat(aNat - 1), sUpdate, tail(mArr));
+	(aNat == 0 && #mArr > aNat) -> overwriteAtPosition(aNat, sUpdate, mArr) = sUpdate |> tail(mArr);	
+	% (aNat < 0 && #mArr > aNat)
+	(aNat >= 0 && #mArr <= aNat) -> overwriteAtPosition(aNat, sUpdate, mArr) = overwriteAtPosition(aNat, sUpdate, mArr <| empty);
+	% (aNat < 0 && #mArr <= aNat)	
+
+	% precedes
+	(!(sUpdate in mArr && sUpdate2 in mArr)) -> precedes(mArr, sUpdate, sUpdate2) = false;
+	(sUpdate in mArr && sUpdate2 in mArr && mArr.0 == sUpdate) -> precedes(mArr, sUpdate, sUpdate2) = true;
+	(sUpdate in mArr && sUpdate2 in mArr && mArr.0 == sUpdate2) -> precedes(mArr, sUpdate, sUpdate2) = false;
+	(sUpdate in mArr && sUpdate2 in mArr && mArr.0 != sUpdate && mArr.0 != sUpdate2) -> precedes(mArr, sUpdate, sUpdate2) = precedes(tail(mArr), sUpdate, sUpdate2);
+	
+	% hasOnlyUniqueStateUpdates
+	hasOnlyUniqueStateUpdates(mArr) = forall index1: Nat . (index1 < #mArr) => (forall index2: Nat . (index2 < #mArr && index1 != index2) => (mArr . index1 != mArr . index2 || mArr . index1 == empty || mArr . index2 == empty));
+
+
+	ALLOW_ATOMIC_BROADCAST = MAX_BROADCASTS > 0;
+
+	ALLOW_RECONFIGURATION = MAX_EPOCH > 0;
+
+
+	% 3 Conditions hold for each set in POSSIBLE_MEMBERS:
+	% The CS and the master reconfiguring process cannot be in the members set.
+	% For any process in a members set and for any process smaller than that one, the smaller one must also be in the set. This restricts the number of possible sets.
+	% There are at least two replicas in each set.
+	POSSIBLE_MEMBERS = {M: Members_t | !(CS in M) && !(pr in M) && (forall p_1, p_2:ProcessId_t. (p_1 in M && p_2 < p_1) => (p_2 in M || p_2 == CS || p_2 == pr)) && ( exists p_1:ProcessId_t, p_2:ProcessId_t . (p_1 != p_2)&& (p_1 in M ) && (p_2 in M))};
+
+	% state_process cannot be CS or pr
+	% And the number is limited by MAX_BROADCASTS + MAX_BROADCASTS*MAX_EPOCH/2, because on every second reconfiguration MAX_BROADCASTS number of messages may get lost
+	POSSIBLE_STATES = {st: State_t | state_process(st) != CS && state_process(st) != pr && (state_number(st) <= MAX_BROADCASTS + MAX_BROADCASTS*Int2Nat(round(MAX_EPOCH/2)))};
+
+	% A state update cannot be empty and the initial and next states must be in POSSIBLE_STATES
+	POSSIBLE_STATE_UPDATES = {su: Message_t | su != empty && state_update_initial_state(su) in POSSIBLE_STATES && state_update_next_state(su) in POSSIBLE_STATES};
+
+
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+	% Parameters of the model
+	% These parameters can be changed.
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+	% this probably does not need to be changed
+	% INITIAL_MESSAGE_ARRAY = [];
+
+	% When editing this, also change the status of the corresponding replica
+	% INITIAL_MEMBERS = {pid: ProcessId_t | pid != CS && pid != pr} - {p2};
+	% INITIAL_LEADER = p0;
+	% INITIAL_STATE = state(p0, 0);
+	
+	% max epoch and broadcast have to be augmented to 3 and 2 to trigger the error
+	MAX_EPOCH = 2;
+	MAX_BROADCASTS = 2;
+
+	
+	CRASHABLE_REPLICAS = {};
+	
+	CHANNEL_SIZE = 50;
+	
+
+
+act
+
+	
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+	% Communication process -> channel
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+	% A communication is sent from the process to the channel.
+	sendCommunicationToChannel, receiveCommunicationOnChannel, sendCommunication: ProcessId_t # ProcessId_t # Communication_t;
+
+		
+	
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+	% Communication channel -> process
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+	% A communication is sent from the channel to the process.
+	sendCommunicationToProcess, receiveCommunicationOnProcess, receiveCommunication: ProcessId_t # ProcessId_t # Communication_t;
+
+
+
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+	% Replica actions
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+	% The replica pid stops working.
+	% args: pid
+	crash: ProcessId_t;
+
+	% The following actions are necessary for the properties/formulas only:
+
+	% The replica in epoch e pid broadcasts the message m.
+	% args: pid # e # m
+	broadcast: ProcessId_t # Nat # Message_t;
+
+	% The replica id in epoch e delivers the message m.
+	% args: pid # e # msg
+	deliver: ProcessId_t # Nat # Message_t;
+
+	% The replica pid changes its configuration to <e, members, leader> and speculatively delivers spec if it is the leader. If b, then pid spec delivers.
+	% args: pid # e # members # leader # spec # b
+	conf_changed: ProcessId_t # Nat # Members_t # ProcessId_t # MessageArray_t # Bool;
+
+		
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+	% CS actions
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+	
+	% The CS introduces a new configuration.
+	% args: epoch # members # leader
+	introduction: Nat # Members_t # ProcessId_t;
+
+
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+	% Reconfiguration master actions
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+	% The process initiates reconfiguration and just received the last epoch e from the CS.
+	% args: e
+	receiveLastEpoch: Nat;
+
+
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+	% Other actions
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+	% The process discards the given communication.
+	% args: sender # receiver # c
+	discardCommunication: ProcessId_t # ProcessId_t # Communication_t;
+
+	% A process does this action when it is done executing.
+	% args: id
+	done: ProcessId_t;
+
+	% When this action happens then something is wrong with the algorithm.
+	error;
+
+	% When this action happens then something is wrong with the model.
+	modelError;
+ 
+
+proc
+
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+	% Channel
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+	% A channel connecting the process "from", with the process "to".
+	% l is the list of communications in this channel.
+	Channel(from: ProcessId_t, to: ProcessId_t, l: List(Communication_t)) = 
+		
+		% receive a communication
+		sum receivedCommunication: Communication_t.(
+
+			% channel must not be full
+			(#l < CHANNEL_SIZE) -> ( 
+				receiveCommunicationOnChannel(from, to, receivedCommunication)
+				.Channel(l=l <| receivedCommunication)
+			) 
+		)
+		 
+		% send a communication if the channel is not empty
+		+ (l != []) -> (
+			sendCommunicationToProcess(from, to, head(l))
+			.Channel(l=tail(l))
+
+		);
+
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+	% Replica
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+	% id
+	% epoch
+	% status
+	% newEpoch is the highest epoch this replica has ever received.
+	% members contains the replicas that are part of the current configuration.
+	% currentLeader contains the leader of the current configuration.
+	% initlen is the initial length of the msg array
+	% lastdelivered is the index of the last delivered message.
+	% msg is the message array.
+	% committedState
+	% speculativeState
+
+	% receivedNewStateAckFrom is a set of processes that already sent a new state ack to this process for the current epoch.
+	% receivedAcceptAckFrom is the set of replicas that already sent an accept ack to this replica for the epoch epoch.
+
+	% broadcastNumber is the number to be attached to the next state update broadcast by this replica.
+
+	Replica(id:ProcessId_t, epoch:Nat, status:Status_t, newEpoch:Nat, members:Members_t, currentLeader:ProcessId_t, next: Int, initlen: Int, lastdelivered: Int, msg: MessageArray_t, committedState: State_t, speculativeState: State_t, receivedNewStateAckFrom:Set(ProcessId_t), receivedAcceptAckFrom: ProcessIdDict_t, broadcastNumber: Nat) = 
+		
+		
+		% The replica receives a communication.
+		sum receivedCommunication: Communication_t, pid: ProcessId_t.(
+			receiveCommunicationOnProcess(pid, id, receivedCommunication).(
+				
+				%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+				% Communication for atomic broadcast
+				%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+				% receive accept
+				(is_accept(receivedCommunication)) -> (
+
+					(accept_epoch(receivedCommunication) == epoch && status == follower) -> (
+						sendCommunicationToChannel(id, pid, AcceptAck(epoch, accept_k(receivedCommunication)))
+						% overwrite the element in msg
+						.Replica(msg=overwriteAtPosition(accept_k(receivedCommunication), accept_m(receivedCommunication), msg))
+
+					) <>
+
+						% discard the communication
+						discardCommunication(pid, id, receivedCommunication)
+						.Replica()	
+
+				) <>
+
+				% receive accept ack
+				(is_accept_ack(receivedCommunication)) -> (
+					((status == leader) && (epoch == accept_ack_epoch(receivedCommunication))) -> (
+							
+						% if the ack has been received from each member for k
+						(receivedAcceptAckFrom(accept_ack_k(receivedCommunication)) + {pid} == members - {id}) -> (
+							% broadcast commit to all members, including self
+							ReplicaBroadCast(id, epoch, status, newEpoch, members, currentLeader, next, initlen, lastdelivered, msg, committedState, speculativeState, receivedNewStateAckFrom, receivedAcceptAckFrom[accept_ack_k(receivedCommunication) -> receivedAcceptAckFrom(accept_ack_k(receivedCommunication)) + {pid}], broadcastNumber, Commit(epoch, accept_ack_k(receivedCommunication)), members)
+
+						% if not every ack has been received then add the sender to receivedAcceptAckFrom
+						) <> (
+							Replica(receivedAcceptAckFrom=receivedAcceptAckFrom[accept_ack_k(receivedCommunication) -> receivedAcceptAckFrom(accept_ack_k(receivedCommunication)) + {pid}])	
+						)
+
+					) <>
+
+						% discard the communication
+						discardCommunication(pid, id, receivedCommunication)
+						.Replica()	
+				) <>
+
+				% receive commit
+				(is_commit(receivedCommunication)) -> (
+					((status == leader || status == follower) && epoch == commit_e(receivedCommunication) && (lastdelivered + 1 == commit_k(receivedCommunication))) -> (
+						% if the state update fits the committed state, then deliver
+						(canApplyStateUpdate(msg.(commit_k(receivedCommunication)), committedState)) -> (
+							deliver(id, epoch, msg.(commit_k(receivedCommunication)))						
+							% apply the update to the committed state
+							.Replica(lastdelivered=commit_k(receivedCommunication), committedState=applyStateUpdate(msg.(commit_k(receivedCommunication)), committedState))
+						) <> (
+							% if the state update does not fit then there is an error				
+							error
+							% we still deliver for the properties
+							.deliver(id, epoch, msg.(commit_k(receivedCommunication)))	
+							.delta
+						)
+						
+					) <>
+
+						% discard the communication
+						discardCommunication(pid, id, receivedCommunication)
+						.Replica()
+				) <>
+
+				%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+				% Communication for Reconfiguration
+				%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+				% receive probe
+				(is_probe(receivedCommunication)) -> (
+					% only proceed if the new epoch is the largest ever received
+					(probe_enew(receivedCommunication) >= newEpoch) -> (
+				
+						( epoch >= probe_e(receivedCommunication)) -> (
+							sendCommunicationToChannel(id, pid, ProbeAck(true, probe_enew(receivedCommunication)))
+							.Replica(newEpoch=probe_enew(receivedCommunication))
+						
+						) <> 
+							sendCommunicationToChannel(id, pid, ProbeAck(false, probe_enew(receivedCommunication)))
+							.Replica(newEpoch=probe_enew(receivedCommunication))
+					) <>
+
+						% discard the communication
+						discardCommunication(pid, id, receivedCommunication)
+						.Replica()
+				) <> 
+
+				% receive new config
+				(is_new_config(receivedCommunication)) -> (
+					% only proceed if newEpoch = received epoch
+					(new_config_epoch(receivedCommunication) == newEpoch) -> (
+						
+						% if the non delivered state updates can be applied to the speculative state
+						(canApplyMultipleStateUpdates(msg, lastdelivered + 1, getIndexOfLastElement(msg), committedState)) -> (
+
+							conf_changed(id, new_config_epoch(receivedCommunication), new_config_members(receivedCommunication), id, getSubMessageArray(lastdelivered + 1, getIndexOfLastElement(msg), msg), true)
+							% Broadcast a new state
+							% receivedAcceptAckFrom is set to return {} for any input, because accept ack's in transit will be rejected anyway since the epoch increased.
+							.ReplicaBroadCast(id, new_config_epoch(receivedCommunication), leader, new_config_epoch(receivedCommunication), new_config_members(receivedCommunication), id, getIndexOfLastElement(msg) + 1, getIndexOfLastElement(msg), lastdelivered, msg, committedState, applyMultipleStateUpdates(msg, lastdelivered + 1, getIndexOfLastElement(msg), committedState), {}, lambda x:Nat. {}, broadcastNumber, NewState(new_config_epoch(receivedCommunication), msg, new_config_members(receivedCommunication)), new_config_members(receivedCommunication) - {id})
+							
+						) <>
+							error
+							.delta
+					) <>
+
+						% discard the communication
+						discardCommunication(pid, id, receivedCommunication)
+						.Replica()
+				) <>
+
+				% receive new state
+				(is_new_state(receivedCommunication)) -> (	
+					(newEpoch <= new_state_epoch(receivedCommunication)) -> (
+
+						conf_changed(id, new_state_epoch(receivedCommunication), new_state_members(receivedCommunication), pid, [], false)
+						.sendCommunicationToChannel(id, pid, NewStateAck(new_state_epoch(receivedCommunication)))
+						% Start with default values and the values from the new config
+						.Replica(epoch=new_state_epoch(receivedCommunication), status=follower, newEpoch=new_state_epoch(receivedCommunication), members=new_state_members(receivedCommunication), currentLeader=pid, msg=new_state_messages(receivedCommunication), receivedNewStateAckFrom={})
+					) <>
+		
+						% discard the communication
+						discardCommunication(pid, id, receivedCommunication)
+						.Replica()
+				) <> 
+
+				% receive new state ack
+				(is_new_state_ack(receivedCommunication)) -> (
+
+					(new_state_ack_epoch(receivedCommunication) == epoch && epoch == newEpoch) -> (
+							% received a newStateAck from every member of the configuration
+							(receivedNewStateAckFrom + {pid} == (members - {id})) -> (
+								
+								% Sending starts from index 0 and not 1.
+								ReplicaBroadcastMultipleCommit(id, epoch, status, newEpoch, members, currentLeader, next, initlen, lastdelivered, msg, committedState, speculativeState, receivedNewStateAckFrom + {pid}, receivedAcceptAckFrom, broadcastNumber, 0)
+							) <>
+								% otherwise add sender to receivedNewStateAckFrom
+								Replica(receivedNewStateAckFrom=receivedNewStateAckFrom + {pid})
+					) <>
+
+						% discard the communication
+						discardCommunication(pid, id, receivedCommunication)
+						.Replica()
+				)
+			)
+
+		)
+
+		%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+		% The replica starts atomic broadcast
+		%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+		
+		% only send if allowed, this replica is the leader and the number of messages in the array is smaller than MAX_BROADCASTS
+		+ (ALLOW_ATOMIC_BROADCAST && currentLeader == id && next < MAX_BROADCASTS) -> (
+
+			sum m: Message_t . ( 
+				
+				% select a fitting stateUpdate and broadcast it
+
+				(m != empty && 
+				% the initial state must fit the speculative state
+				state_update_initial_state(m) == speculativeState &&
+				% the next state must be state(id, broadcastNumber + 1)
+				state_process(state_update_next_state(m)) == id && 
+				state_number(state_update_next_state(m)) == broadcastNumber + 1) -> (
+					broadcast(id, epoch, m)
+					.ReplicaBroadCast(id, epoch, status, newEpoch, members, currentLeader, next + 1, initlen, lastdelivered, overwriteAtPosition(Int2Nat(next), m, msg), committedState, applyStateUpdate(m, speculativeState), receivedNewStateAckFrom, receivedAcceptAckFrom, broadcastNumber + 1, Accept(epoch, Int2Nat(next), m), members - {id} )
+				)
+			) 
+		
+			
+
+		)
+
+		%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+		% The replica crashes
+		%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+		+ (id in CRASHABLE_REPLICAS) -> (
+			crash(id)
+			.delta
+		)
+			 
+
+	
+		; 
+
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+ 	% Reconfiguration Master
+ 	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+	
+	% This is the process that initiates reconfiguration
+	
+	% id
+	ReconfigurationMaster(id: ProcessId_t) =
+
+		(ALLOW_RECONFIGURATION) -> (
+			sendCommunicationToChannel(id, CS, ReqLastEpoch)
+			.sum receivedEpoch: Nat . (
+				receiveCommunicationOnProcess(CS, id, SendLastEpoch(receivedEpoch))
+				.receiveLastEpoch(receivedEpoch)
+				.ReconfigurationMasterGetMembers(id, receivedEpoch + 1, receivedEpoch)
+			)
+		)
+	;
+
+
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+ 	% Reconfiguration Master Part 2: Get members loop
+ 	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+ 
+	% id
+ 	% enew is the epoch of the new configuration.
+ 	% e is the epoch that is sent in the probe and that is possibly decremented.
+ 	ReconfigurationMasterGetMembers(id: ProcessId_t, enew: Nat, e:Nat) =
+ 
+ 		sendCommunicationToChannel(id, CS , ReqMembers(e))
+
+ 		.sum receivedMembers: Members_t.(
+ 			receiveCommunicationOnProcess(CS, id, SendMembers(receivedMembers, e))
+ 			.ReconfigurationMasterSendProbes(id, enew, receivedMembers, e, receivedMembers)
+ 		)
+ 				
+ 	;
+
+
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+ 	% Reconfiguration Master Part 3: Send Probes
+ 	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+ 
+ 	% In this part, Probes are sent to every process in sendTo.
+	% After that this process waits for a ProbeAck. If that ProbeAck was positive, a CAS is executed and the reconfiguration is done. If the ProbeAck is negative, then e is decremented and the process ReconfigurationMasterGetMembers is executed.
+ 
+ 	% id
+	% enew is the epoch of the new configuration.
+	% M is the set of members of the configuration with epoch e.
+	% e is the epoch of the configuration that is being probed.
+ 	% sendTo is the set of processes that a Probe is sent to.
+ 	ReconfigurationMasterSendProbes(id: ProcessId_t, enew: Nat, M: Members_t, e: Nat, sendTo: Set(ProcessId_t)) =
+	
+		% if the set if not empty, then send a probe to a process in sendTo
+ 		(sendTo != {}) -> (
+ 			sum pid:ProcessId_t.
+ 				% only send to processes in sentTo
+ 				(pid in sendTo) -> (
+					sendCommunicationToChannel(id, pid, Probe(enew, e))
+ 					% remove the process from the set
+ 					.ReconfigurationMasterSendProbes(sendTo=sendTo - {pid})
+ 				)
+ 
+ 		) <>
+ 			% if the set is empty, then the broadcast is done and this process waits for an answer
+			sum pid: ProcessId_t, probeAckEnew: Nat, b: Bool . (
+				
+				receiveCommunicationOnProcess(pid, id, ProbeAck(b, probeAckEnew))
+
+				% If the sender is in M and the epoch matches, then process the Probe Ack
+				.(pid in M && probeAckEnew == enew) -> (
+
+					% positive reply
+					(b) -> (
+						% send a CAS, where Mnew are the members of the new configuration
+						sum Mnew: Members_t.
+ 							% the leader must be in Mnew, and Mnew be in POSSIBLE_MEMBERS
+ 							( (pid in Mnew) && (Mnew in POSSIBLE_MEMBERS) ) -> (
+ 											
+ 								sendCommunicationToChannel(id, CS, ReqCAS(Int2Nat(enew - 1), Mnew, pid)) 
+ 								.(
+ 									% If CAS was successful, send new config to new leader
+ 									receiveCommunicationOnProcess(CS, id, SendCAS(true, Int2Nat(enew - 1), Mnew, pid))
+ 									.sendCommunicationToChannel(id, pid, NewConfig(enew, Mnew))
+									.ReconfigurationMaster(id)
+ 
+ 									% If CAS failed
+ 									+ receiveCommunicationOnProcess(CS, id, SendCAS(false, Int2Nat(enew - 1), Mnew, pid))
+ 									.ReconfigurationMaster(id)
+ 								)	
+ 							)
+					% negative reply
+					) <> (
+
+						% decrement e if possible
+						(e > 0) -> (
+							ReconfigurationMasterGetMembers(id, enew, Int2Nat(e - 1))
+ 						) <>				
+ 						% If e is too small then continue waiting
+ 							ReconfigurationMasterSendProbes()
+
+					)
+
+				
+				) <> (
+					% if the data does not match, discard the communication and continue waiting
+					discardCommunication(pid, id, ProbeAck(b, probeAckEnew))
+					.ReconfigurationMasterSendProbes()
+				)
+	
+			)
+
+
+ 		;
+
+
+
+
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+ 	% The replica broadcasts a communication
+ 	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+ 
+ 	% When broadcasting is finished, the Replica process will be executed with the same data as this process.
+ 
+ 	% communicationToBroadcast is the communication that will be broadcast.
+ 	% sendTo is the set of processes that the communication will be broadcast to.
+ 	ReplicaBroadCast(id: ProcessId_t, epoch: Nat, status: Status_t, newEpoch :Nat, members: Members_t, currentLeader: ProcessId_t, next: Int, initlen: Int, lastdelivered: Int, msg: MessageArray_t, committedState: State_t, speculativeState: State_t, receivedNewStateAckFrom: Set(ProcessId_t), receivedAcceptAckFrom: ProcessIdDict_t, broadcastNumber: Nat, communicationToBroadcast: Communication_t, sendTo: Set(ProcessId_t)) =
+ 
+		% if the set is not empty, send the communication to a process in sendTo
+ 		(sendTo != {}) -> (
+
+ 			sum pid:ProcessId_t.
+ 				% only send to processes in sentTo
+ 				(pid in sendTo) -> (
+ 					sendCommunicationToChannel(id, pid, communicationToBroadcast).
+
+					% if the set without pid is not empty, then continue broadcasting
+					(sendTo - {pid} != {}) -> (
+ 						% remove the process from the set
+ 						ReplicaBroadCast(sendTo=sendTo - {pid})
+					) <>
+						% if the set without pid is empty, then the broadcast is done
+						Replica(id, epoch, status, newEpoch, members, currentLeader, next, initlen, lastdelivered, msg, committedState, speculativeState, receivedNewStateAckFrom, receivedAcceptAckFrom, broadcastNumber)
+ 				)
+ 
+ 				
+ 		) <> (
+ 			% a model error occurs here, as ReplicaBroadCast was executed with sendTo={}
+ 			modelError
+			.delta	
+ 		);
+	
+
+
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+	% The replica broadcasts multiple commits part 1
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+	% For k = initlenTemp..initlen this broadcasts Commit(epoch,k) to every process in members.
+
+	% initlenTemp
+	ReplicaBroadcastMultipleCommit(id: ProcessId_t, epoch: Nat, status: Status_t, newEpoch: Nat, members: Members_t, currentLeader: ProcessId_t, next: Int, initlen: Int, lastdelivered: Int, msg: MessageArray_t, committedState: State_t, speculativeState: State_t, receivedNewStateAckFrom:Set(ProcessId_t), receivedAcceptAckFrom: ProcessIdDict_t, broadcastNumber: Nat, initlenTemp: Nat) =
+
+		% broadcast Commit(epoch, initlenTemp) to every process in members
+		(initlenTemp <= initlen) -> (
+			ReplicaBroadcastMultipleCommit2(id, epoch, status, newEpoch, members, currentLeader, next, initlen, lastdelivered, msg, committedState, speculativeState, receivedNewStateAckFrom, receivedAcceptAckFrom, broadcastNumber, members, initlenTemp)	
+		) <> 
+			
+			Replica(id, epoch, status, newEpoch, members, currentLeader, next, initlen, lastdelivered, msg, committedState, speculativeState, receivedNewStateAckFrom, receivedAcceptAckFrom, broadcastNumber)
+		;
+
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+ 	% The replica broadcasts multiple commits part 2
+ 	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+	
+	% The replica broadcasts Commit(epoch, initlenTemp) to every process in members. After this is done, ReplicaBroadcastMultipleCommit is executed with initlenTemp + 1.
+
+	% initlenTemp
+ 	ReplicaBroadcastMultipleCommit2(id: ProcessId_t, epoch: Nat, status: Status_t, newEpoch: Nat, members: Members_t, currentLeader: ProcessId_t, next: Int, initlen: Int, lastdelivered: Int, msg: MessageArray_t, committedState: State_t, speculativeState: State_t, receivedNewStateAckFrom:Set(ProcessId_t), receivedAcceptAckFrom: ProcessIdDict_t, broadcastNumber: Nat, sendTo: Set(ProcessId_t), initlenTemp: Nat) =
+ 
+		% if the set is not empty, send the communication to a process in sendTo
+ 		(sendTo != {}) -> (
+ 			sum pid:ProcessId_t.
+ 				% only send to processes in sentTo
+ 				(pid in sendTo) -> (
+ 					sendCommunicationToChannel(id, pid, Commit(epoch, initlenTemp)).
+
+					% if the set without pid is not empty, then continue broadcasting
+					(sendTo - {pid} != {}) -> (
+ 						% remove the process from the set
+ 						ReplicaBroadcastMultipleCommit2(sendTo=sendTo - {pid})
+					) <>
+						% If the commit has been sent to every member, executed ReplicaBroadcastMultipleCommit with initlenTemp + 1
+						ReplicaBroadcastMultipleCommit(id, epoch, status, newEpoch, members, currentLeader, next, initlen, lastdelivered, msg, committedState, speculativeState, receivedNewStateAckFrom, receivedAcceptAckFrom, broadcastNumber, initlenTemp + 1)
+ 				)
+ 				
+ 		) <> (
+ 			% the set should not be empty
+			modelError
+			.delta
+ 		);
+
+
+
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+	% Configuration Service
+	%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+	% id
+	% e is the latest epoch.
+	% membersDict stores the member set associated with an epoch.
+	ConfigurationService(id: ProcessId_t, e: Nat, membersDict: MembersDict_t) = 
+
+		% The CS can only do done actions, if MAX_EPOCH has been reached
+		(e >= MAX_EPOCH) -> (
+			done(id)
+			.ConfigurationService()
+
+		) <> (
+
+		% Receive a communication
+		sum receivedCommunication: Communication_t, pid:ProcessId_t.(
+			receiveCommunicationOnProcess(pid, id, receivedCommunication).
+
+				% receive req last epoch
+				(is_req_last_epoch(receivedCommunication)) -> (
+					sendCommunicationToChannel(id, pid, SendLastEpoch(e))
+					.ConfigurationService()
+
+
+				) <> 
+
+				% receive req CAS
+				(is_req_CAS(receivedCommunication)) -> (
+
+					% CAS is successful
+					(req_CAS_epoch(receivedCommunication) == e) -> (
+						% introduce new configuration
+						introduction( e + 1, req_CAS_members(receivedCommunication), req_CAS_leader(receivedCommunication))
+						.sendCommunicationToChannel(id, pid, SendCAS(true, e, req_CAS_members(receivedCommunication), req_CAS_leader(receivedCommunication) ))
+						.ConfigurationService(id, e + 1, membersDict[e + 1 -> req_CAS_members(receivedCommunication)])
+					
+					) <> 
+						% CAS failed
+						sendCommunicationToChannel(id, pid, SendCAS(false, e, req_CAS_members(receivedCommunication), req_CAS_leader(receivedCommunication) ))
+						.ConfigurationService()
+
+				) <> 
+
+				% receive req members
+				(is_req_members(receivedCommunication)) -> (
+					% req members epoch must be smaller than the latest epoch
+					(req_members_epoch(receivedCommunication) <= e) -> (
+						sendCommunicationToChannel(id, pid, SendMembers(membersDict(req_members_epoch(receivedCommunication)), req_members_epoch(receivedCommunication) ))
+						.ConfigurationService()
+					) <>
+						ConfigurationService()
+				)
+		
+			)
+		);
+
+
+
+init
+  hide( {
+			%
+			discardCommunication
+			,receiveCommunication, sendCommunication
+
+		},
+    allow(
+      {   	sendCommunication, receiveCommunication,
+			
+		  	introduction, receiveLastEpoch,
+
+			broadcast, deliver, conf_changed,
+		  	 
+		  	discardCommunication, crash, done, error, modelError
+
+	  },
+      comm(
+        {   
+			
+			sendCommunicationToChannel | receiveCommunicationOnChannel -> sendCommunication,
+			sendCommunicationToProcess | receiveCommunicationOnProcess -> receiveCommunication
+			
+			
+		  },
+		  % When adding/removing a replica, the corresponding Id has to be added/removed from the sort.
+			Replica(p0, 1, leader, 1, {p0, p1}, p0, 1, -1, 0, [stateUpdate(state(p0, 0), state(p0, 1))], state(p0, 1), state(p0, 1), {p1}, lambda x:Nat.if( x == 0, {p1}, {}), 1) || Channel(CS, p0, []) || Channel(p0, CS, []) || Channel(p0, p0, []) || Channel(pr, p0, []) || Channel(p0, pr, [])
+			|| Channel(p0, p1, []) 
+			|| Channel(p0, p2, [])
+			
+
+		  	|| Replica(p1, 1, follower, 1, {p0, p1}, p0, 0, -1, 0, [stateUpdate(state(p0, 0), state(p0, 1))], state(p0, 1), state(p0, 0), {}, lambda x:Nat.{}, 0) || Channel(CS, p1, []) || Channel(p1, CS, []) || Channel(p1, p1, []) || Channel(pr, p1, []) || Channel(p1, pr, [])
+			|| Channel(p1, p0, []) 
+			|| Channel(p1, p2, [])
+			
+
+		  	|| Replica(p2, 0, follower, 1, {p0, p1, p2}, p0, 0, -1, -1, [], state(p0, 0), state(p0, 0), {}, lambda x:Nat.{}, 0) || Channel(CS, p2, []) || Channel(p2, CS, []) || Channel(p2, p2, []) || Channel(pr, p2, []) || Channel(p2, pr, [])
+			|| Channel(p2, p0, []) 
+			|| Channel(p2, p1, [])
+		
+
+		
+		
+		
+			|| ReconfigurationMaster(pr) || Channel(pr, CS, []) || Channel(CS, pr, [])
+			
+			
+		  	|| ConfigurationService(CS, 1, lambda x:Nat . if(x == 1, {p0, p1} ,{p0, p1, p2}))
+      ) 
+    ) 
+ ) 
+;

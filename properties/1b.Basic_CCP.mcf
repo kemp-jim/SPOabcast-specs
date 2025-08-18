@@ -1,0 +1,6 @@
+% If a process pi joins a configuration C = (_, M, _), then pi is a member of M.
+
+
+[true*]
+% conf_changed(pi, _, M, _, _, _) with !(pi in M)
+[exists pi, pid: ProcessId_t, e: Nat, M: Members_t, mArr: MessageArray_t, b: Bool . val(!(pi in M)) && conf_changed(pi, e, M, pid, mArr, b)] false 

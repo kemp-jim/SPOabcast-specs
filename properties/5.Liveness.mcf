@@ -1,0 +1,14 @@
+% pi initiates reconfiguration for the last epoch
+% if pi does not crash then eventually the last configuration is introduced
+
+% As only pr can initiate reconfiguration, we only check for pr. And pr never crashes in the model anyway.
+
+% Here, pr requests the last epoch. And if it is MAX_EPOCH - 1, then the introduction(MAX_EPOCH, _, _) is unavoidable.
+
+[true*]
+[receiveLastEpoch(Int2Nat(MAX_EPOCH - 1))] (
+% eventually the last epoch is introduced
+mu X . 
+% dont follow any done actions since they are self loops
+[forall pid: ProcessId_t . !done(pid)]X || 
+<exists M: Members_t, pid: ProcessId_t . introduction(MAX_EPOCH, M, pid)> true )

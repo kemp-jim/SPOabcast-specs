@@ -1,0 +1,13 @@
+% All application messages broadcast in a single execution are unique.
+
+forall m: Message_t .
+val(m in POSSIBLE_STATE_UPDATES) =>
+
+%
+[true*]
+% broadcast(_, _, m, _)
+[(exists pj: ProcessId_t, e: Nat . broadcast(pj, e, m))]
+%
+[true*]
+% broadcast(_, _, m, _)
+[(exists pj: ProcessId_t, e: Nat . broadcast(pj, e, m))] false
