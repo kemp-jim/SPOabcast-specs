@@ -1,0 +1,18 @@
+% A process delivers a given application message m at most once, and only if m was previously broadcast.
+
+
+% A process pi cannot deliver the same message twice
+
+[true*]
+
+forall m: Message_t, pi: ProcessId_t .
+val(m in POSSIBLE_STATE_UPDATES && pi != CS && pi != pr) => (
+
+% deliver(pi, _, m)
+[exists e: Nat . deliver(pi, e, m)]
+%
+[true*]
+% deliver(pi, _, m)
+[exists e: Nat . deliver(pi, e, m)] false
+
+)

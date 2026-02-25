@@ -1,0 +1,14 @@
+% A process delivers a given application message m at most once, and only if m was previously broadcast.
+
+
+% A process cannot deliver a message that has not been broadcast before
+
+forall m: Message_t.
+val(m in POSSIBLE_STATE_UPDATES) => (
+
+% ( !broadcast(_, _, m) )*
+[( !(exists pid: ProcessId_t, e: Nat . broadcast(pid, e, m) ) )*]
+% deliver(_, _, m)
+[exists pid: ProcessId_t, e: Nat . deliver(pid, e, m)] false
+
+)
